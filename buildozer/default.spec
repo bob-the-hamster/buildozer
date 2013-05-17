@@ -66,6 +66,11 @@ fullscreen = 1
 # (str) Android SDK directory (if empty, it will be automatically downloaded.)
 #android.sdk_path = 
 
+# (str) Enable In-App Billing support by pasting your public key for this
+# application. Find it in the "Services & APIs" section for your app in
+# the Google Play Developer Console
+#android.billing.key =
+
 # (str) Android entry point, default is ok for Kivy-based app
 #android.entrypoint = org.renpy.android.PythonActivity
 
