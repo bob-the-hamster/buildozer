@@ -376,6 +376,11 @@ class TargetAndroid(Target):
         for permission in permissions:
             build_cmd += ' --permission {0}'.format(permission)
 
+        # Add billing support.
+        billing_key = config.getdefault('app', 'android.billing.key', '')
+        if billing_key:
+            build_cmd += ' --with-billing {0}'.format(billing_key)
+
         # add extra Java jar files
         add_jars = config.getdefault('app', 'android.add_jars', '')
         if add_jars:
