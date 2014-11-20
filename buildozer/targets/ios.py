@@ -2,9 +2,13 @@
 iOS target, based on kivy-ios project. (not working yet.)
 '''
 
+import sys
+if sys.platform != 'darwin':
+    raise NotImplementedError('Windows platform not yet working for Android')
+
 import plistlib
 from buildozer import BuildozerCommandException
-from buildozer.target import Target
+from buildozer.target import Target, no_config
 from os.path import join, basename
 from getpass import getpass
 
@@ -63,7 +67,6 @@ class TargetIos(Target):
         checkbin('Xcode xcodebuild', 'xcodebuild')
         checkbin('Xcode xcode-select', 'xcode-select')
         checkbin('Git git', 'git')
-        checkbin('Cython', 'cython')
         checkbin('Mercurial', 'hg')
         checkbin('Cython cython', 'cython')
         checkbin('pkg-config', 'pkg-config')
@@ -305,6 +308,7 @@ class TargetIos(Target):
 
         super(TargetIos, self).check_configuration_tokens(errors)
 
+    @no_config
     def cmd_list_identities(self, *args):
         '''List the available identities to use for signing.
         '''

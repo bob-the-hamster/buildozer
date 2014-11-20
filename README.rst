@@ -5,9 +5,18 @@ This tool is currently in alpha.
 
 Buildozer is a tool for creating application packages easily.
 
-The goal is to have one "buildozer.spec" file in your app directory: it
-describe your application requirements, titles, etc.  Buildozer will use that
-spec for create package for Android, iOS, Windows, OSX and Linux.
+The goal is to have one "buildozer.spec" file in your app directory, describing
+your application requirements and settings such as title, icon, included modules 
+etc. Buildozer will use that spec to create a package for Android, iOS, Windows,
+OSX and/or Linux. 
+
+Buildozer currently supports packaging for Android via the `python-for-android 
+<http://github.com/kivy/python-for-android/>`_
+project, and for iOS via the kivy-ios project. Support for other operating systems
+is intended in the future.
+
+Note that this tool has nothing to do with the eponymous online build service 
+`buildozer.io <http://buildozer.io />`_.
 
 Usage example
 -------------
@@ -64,7 +73,7 @@ Usage
       clean              Clean the whole Buildozer environment.
       help               Show the Buildozer help.
       init               Create a initial buildozer.spec in the current directory
-      setdefault         Set the default command to do when to arguments are given
+      setdefault         Set the default command to do when no arguments are given
       version            Show the Buildozer version
 
     Target commands:
@@ -81,4 +90,21 @@ buildozer.spec
 --------------
 
 See `buildozer/default.spec <https://raw.github.com/kivy/buildozer/master/buildozer/default.spec>`_ for an up-to-date spec file.
+
+
+Default config
+--------------
+
+You can override the value of *any* buildozer.spec config token by
+setting an appropriate environment variable. These are all of the
+form ``$SECTION_TOKEN``, where SECTION is the config file section and
+TOKEN is the config token to override. Dots are replaced by
+underscores.
+
+For example, here are some config tokens from the [app] section of the
+config, along with the environment variables that would override them.
+
+- ``title`` -> ``$APP_TITLE``
+- ``package.name`` -> ``$APP_PACKAGE_NAME``
+- ``android.p4a_dir`` -> ``$APP_ANDROID_P4A_DIR``
 
