@@ -15,7 +15,7 @@ ANDROID_API = '14'
 ANDROID_MINAPI = '8'
 ANDROID_SDK_VERSION = '21'
 ANDROID_NDK_VERSION = '9c'
-APACHE_ANT_VERSION = '1.8.4'
+APACHE_ANT_VERSION = '1.9.4'
 
 import traceback
 import os
@@ -23,12 +23,14 @@ import io
 from pipes import quote
 from sys import platform, executable
 from buildozer import BuildozerException
+from buildozer import IS_PY3
 from buildozer.target import Target
 from os import environ
 from os.path import exists, join, realpath, expanduser, basename, relpath
 from shutil import copyfile
 from glob import glob
 
+from buildozer.libs.version import parse
 
 
 class TargetAndroid(Target):
@@ -107,14 +109,15 @@ class TargetAndroid(Target):
             self.javac_cmd = self._locate_java('javac')
             self.keytool_cmd = self._locate_java('keytool')
 
-        # Check for C header <zlib.h>.
-        _, _, returncode_dpkg = self.buildozer.cmd(
-                'dpkg --version', break_on_error= False)
-        is_debian_like = (returncode_dpkg == 0)
-        if is_debian_like:
-            if not self.buildozer.file_exists('/usr/include/zlib.h'):
-                message = 'zlib headers must be installed, run: sudo apt-get install zlib1g-dev'
-                raise BuildozerException(message)
+            # Check for C header <zlib.h>.
+            _, _, returncode_dpkg = self.buildozer.cmd(
+                    'dpkg --version', break_on_error= False)
+            is_debian_like = (returncode_dpkg == 0)
+            if is_debian_like and \
+                not self.buildozer.file_exists('/usr/include/zlib.h'):
+                    raise BuildozerException(
+                        'zlib headers must be installed, '
+                        'run: sudo apt-get install zlib1g-dev')
 
         # Need to add internally installed ant to path for external tools
         # like adb to use
@@ -300,7 +303,7 @@ class TargetAndroid(Target):
                 available_packages.splitlines() if x.startswith('id: ')]
 
     def _android_update_sdk(self, packages):
-        from buildozer.libs.pexpect import EOF
+        from pexpect import EOF
         java_tool_options = environ.get('JAVA_TOOL_OPTIONS', '')
         child = self.buildozer.cmd_expect('{} update sdk -u -a -t {}'.format(
             self.android_cmd, packages,
@@ -308,32 +311,30 @@ class TargetAndroid(Target):
             timeout=None,
             env={'JAVA_TOOL_OPTIONS': java_tool_options + ' -Dfile.encoding=UTF-8'})
         while True:
-            index = child.expect([EOF, '[y/n]: '])
+            index = child.expect([EOF, u'[y/n]: '])
             if index == 0:
                 break
             child.sendline('y')
 
-    def _process_version_string(self, version_string):
-        version = [int(i) for i in version_string.split(".")]
-        return version
-
-    def _build_package_string(self, package_name, version_list):
-        version_string = '.'.join([str(ver) for ver in version_list])
-        return '{}-{}'.format(package_name, version_string)
+    def _build_package_string(self, package_name, version):
+        return '{}-{}'.format(package_name, version)
 
     def _read_version_subdir(self, *args):
         versions = []
+        if not os.path.exists(join(*args)):
+            self.buildozer.debug(
+                'build-tools folder not found {}'.format(join(*args)))
+            return parse("0")
         for v in os.listdir(join(*args)):
             try:
-                versions.append(self._process_version_string(v))
+                versions.append(parse(v))
             except:
                 pass
         if not versions:
             self.buildozer.error(
                 'Unable to find the latest version for {}'.format(join(*args)))
-            return [0]
-        versions.sort()
-        return versions[-1]
+            return parse("0")
+        return max(versions)
 
     def _find_latest_package(self, packages, key):
         package_versions = []
@@ -341,14 +342,26 @@ class TargetAndroid(Target):
             if not p.startswith(key):
                 continue
             version_string = p.split(key)[-1]
-            version = self._process_version_string(version_string)
+            version = parse(version_string)
             package_versions.append(version)
         if not package_versions:
             return
-        package_versions.sort()
-        return package_versions[-1]
+        return max(package_versions)
 
     def _install_android_packages(self):
+
+        # if any of theses value change into the buildozer.spec, retry the
+        # update
+        cache_key = 'android:sdk_installation'
+        cache_value = [
+            self.android_api,
+            self.android_minapi,
+            self.android_ndk_version,
+            self.android_sdk_dir,
+            self.android_ndk_dir]
+        if self.buildozer.state.get(cache_key, None) == cache_value:
+            return True
+
         # 3 pass installation.
         if not os.access(self.android_cmd, os.X_OK):
             self.buildozer.cmd('chmod ug+x {}'.format(self.android_cmd))
@@ -377,6 +390,9 @@ class TargetAndroid(Target):
 
         self.buildozer.info('Android packages installation done.')
 
+        self.buildozer.state[cache_key] = cache_value
+        self.buildozer.state.sync()
+
     def install_platform(self):
         cmd = self.buildozer.cmd
         self.pa_dir = pa_dir = join(self.buildozer.platform_dir, 'python-for-android')
@@ -386,7 +402,7 @@ class TargetAndroid(Target):
                 cmd('ln -sf {} ./python-for-android'.format(system_p4a_dir),
                     cwd = self.buildozer.platform_dir)
             else:
-                cmd('git clone git://github.com/kivy/python-for-android',
+                cmd('git clone https://github.com/kivy/python-for-android',
                     cwd=self.buildozer.platform_dir)
         elif self.platform_update:
             cmd('git clean -dxf', cwd=pa_dir)
@@ -440,15 +456,22 @@ class TargetAndroid(Target):
 
         dist_name = self.buildozer.config.get('app', 'package.name')
         dist_dir = join(self.pa_dir, 'dist', dist_name)
-        if not exists(dist_dir):
+        dist_file = join(dist_dir, 'private', 'include', 'python2.7',
+                         'pyconfig.h')
+        if not exists(dist_file):
             need_compile = 1
 
-        # whitelist p4a
-        p4a_whitelist = self.buildozer.config.getlist('app', 'android.p4a_whitelist')
-        if p4a_whitelist:
-            with open(join(self.pa_dir, 'src', 'whitelist.txt'), 'w') as fd:
-                for wl in p4a_whitelist:
-                    fd.write(wl + '\n')
+        # len('requirements.source.') == 20, so use name[20:]
+        source_dirs = {'P4A_{}_DIR'.format(name[20:]):
+                           realpath(expanduser(value))
+                       for name, value in self.buildozer.config.items('app')
+                       if name.startswith('requirements.source.')}
+        if source_dirs:
+            need_compile = 1
+            self.buildozer.environ.update(source_dirs)
+            self.buildozer.info('Using custom source dirs:\n    {}'.format(
+                '\n    '.join(['{} = {}'.format(k, v)
+                             for k, v in source_dirs.items()])))
 
         if not need_compile:
             self.buildozer.info('Distribution already compiled, pass.')
@@ -478,6 +501,13 @@ class TargetAndroid(Target):
         if package_domain:
             package = package_domain + '.' + package
         return package.lower()
+
+    def _generate_whitelist(self, dist_dir):
+        p4a_whitelist = self.buildozer.config.getlist('app', 'android.p4a_whitelist') or []
+        whitelist_fn = join(dist_dir, 'whitelist.txt')
+        with open(whitelist_fn, 'w') as fd:
+            for wl in p4a_whitelist:
+                fd.write(wl + '\n')
 
     def build_package(self):
         dist_name = self.buildozer.config.get('app', 'package.name')
@@ -509,6 +539,9 @@ class TargetAndroid(Target):
 
         # add src files
         self._add_java_src(dist_dir)
+
+        # generate the whitelist if needed
+        self._generate_whitelist(dist_dir)
 
         # build the app
         build_cmd = (
@@ -663,7 +696,10 @@ class TargetAndroid(Target):
         # recreate the project.properties
         with io.open(project_fn, 'w', encoding='utf-8') as fd:
             for line in content:
-                fd.write(line.decode('utf-8'))
+                if IS_PY3:
+                    fd.write(line)
+                else:
+                    fd.write(line.decode('utf-8'))
             for index, ref in enumerate(references):
                 fd.write(u'android.library.reference.{}={}\n'.format(
                     index + 1, ref))

@@ -6,13 +6,14 @@ Generic Python packager for Android / iOS. Desktop later.
 
 '''
 
-__version__ = '0.17-dev'
+__version__ = '0.30dev'
 
 import os
 import re
 import sys
 import zipfile
 import select
+import codecs
 from buildozer.jsonstore import JsonStore
 from sys import stdout, stderr, exit
 from re import search
@@ -41,7 +42,10 @@ try:
     RESET_SEQ = colorama.Fore.RESET + colorama.Style.RESET_ALL
     COLOR_SEQ = lambda x: x
     BOLD_SEQ = ''
-    BLACK = colorama.Fore.BLACK + colorama.Style.DIM
+    if sys.platform == 'win32':
+        BLACK = colorama.Fore.BLACK + colorama.Style.DIM
+    else:
+        BLACK = colorama.Fore.BLACK + colorama.Style.BRIGHT
     RED = colorama.Fore.RED
     BLUE = colorama.Fore.CYAN
     USE_COLOR = 'NO_COLOR' not in environ
@@ -86,7 +90,7 @@ class BuildozerException(Exception):
 class BuildozerCommandException(BuildozerException):
     '''
     Exception raised when an external command failed.
-    
+
     See: `Buildozer.cmd()`.
     '''
     pass
@@ -94,7 +98,7 @@ class BuildozerCommandException(BuildozerException):
 
 class Buildozer(object):
 
-    standard_cmds = ('distclean', 'update', 'debug', 'release', 
+    standard_cmds = ('distclean', 'update', 'debug', 'release',
                      'deploy', 'run', 'serve')
 
     def __init__(self, filename='buildozer.spec', target=None):
@@ -125,6 +129,7 @@ class Buildozer(object):
                 'buildozer', 'log_level', '1'))
         except:
             pass
+        self.builddir = self.config.getdefault('buildozer', 'builddir', None)
 
         self.targetname = None
         self.target = None
@@ -313,6 +318,16 @@ class Buildozer(object):
         process.communicate()
         if process.returncode != 0 and break_on_error:
             self.error('Command failed: {0}'.format(command))
+            self.error('')
+            self.error('Buildozer failed to execute the last command')
+            if self.log_level <= 1:
+                self.error('If the error is not obvious, please raise the log_level to 2')
+                self.error('and retry the latest command.')
+            else:
+                self.error('The error might be hidden in the log above this error')
+                self.error('Please read the full log, and search for it before')
+                self.error('raising an issue with buildozer itself.')
+            self.error('In case of a bug report, please add a full log with log_level = 2')
             raise BuildozerCommandException()
         if ret_stdout:
             ret_stdout = b''.join(ret_stdout)
@@ -323,7 +338,7 @@ class Buildozer(object):
                 process.returncode)
 
     def cmd_expect(self, command, **kwargs):
-        from buildozer.libs.pexpect import spawn
+        from pexpect import spawnu
 
         # prepare the environ, based on the system + our own env
         env = copy(environ)
@@ -336,7 +351,7 @@ class Buildozer(object):
         show_output = kwargs.pop('show_output')
 
         if show_output:
-            kwargs['logfile'] = stdout
+            kwargs['logfile'] = codecs.getwriter('utf8')(stdout)
 
         if not sensible:
             self.debug('Run (expect) {0!r}'.format(command))
@@ -344,7 +359,7 @@ class Buildozer(object):
             self.debug('Run (expect) {0!r} ...'.format(command.split()[0]))
 
         self.debug('Cwd {}'.format(kwargs.get('cwd')))
-        return spawn(command, **kwargs)
+        return spawnu(command, **kwargs)
 
     def check_configuration_tokens(self):
         '''Ensure the spec file is 'correct'.
@@ -404,6 +419,9 @@ class Buildozer(object):
 
         # create local dir
         specdir = dirname(self.specfilename)
+        if self.builddir:
+            specdir = self.builddir
+
         self.mkdir(join(specdir, '.buildozer'))
         self.mkdir(join(specdir, 'bin'))
         self.mkdir(self.applibs_dir)
@@ -788,6 +806,8 @@ class Buildozer(object):
 
     @property
     def buildozer_dir(self):
+        if self.builddir:
+            return join(self.builddir, '.buildozer')
         return join(self.root_dir, '.buildozer')
 
     @property
@@ -964,23 +984,27 @@ class Buildozer(object):
         '''If effective user id is 0, display a warning and require
         user input to continue (or to cancel)'''
 
-        try:  # ensure same result in python2 and python3
-            input = raw_input
-        except NameError:
-            pass
+        if IS_PY3:
+            input_func = input
+        else:
+            input_func = raw_input
 
         warn_on_root = self.config.getdefault('buildozer', 'warn_on_root', '1')
-        euid = os.geteuid()
-        if warn_on_root == '1' and euid == 0:
+        try:
+            euid = os.geteuid() == 0
+        except AttributeError:
+            if sys.platform == 'win32':
+                import ctypes
+            euid = ctypes.windll.shell32.IsUserAnAdmin() != 0
+        if warn_on_root == '1' and euid:
             print('\033[91m\033[1mBuildozer is running as root!\033[0m')
             print('\033[91mThis is \033[1mnot\033[0m \033[91mrecommended, and may lead to problems later.\033[0m')
             cont = None
             while cont not in ('y', 'n'):
-                cont = input('Are you sure you want to continue [y/n]? ')
+                cont = input_func('Are you sure you want to continue [y/n]? ')
 
             if cont == 'n':
                 sys.exit()
-            
 
     def cmd_init(self, *args):
         '''Create a initial buildozer.spec in the current directory
@@ -994,8 +1018,8 @@ class Buildozer(object):
     def cmd_distclean(self, *args):
         '''Clean the whole Buildozer environment.
         '''
-        print("Warning: Your ndk, sdk and all other cached packages will be"+\
-            " removed. Continue? (y/n)")
+        print("Warning: Your ndk, sdk and all other cached packages will be"
+              " removed. Continue? (y/n)")
         if sys.stdin.readline().lower()[0] == 'y':
             self.info('Clean the global build directory')
             if not exists(self.global_buildozer_dir):
